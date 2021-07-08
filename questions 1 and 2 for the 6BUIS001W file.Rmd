@@ -1,0 +1,582 @@
+---
+title: "6BUIS001W- Question 1"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Step 1: import the packages that will be used for this analysis
+
+#### Import packages
+
+```{r}
+#Install packages if missing
+list.of.packages <- c("knitr","ggplot2", "DBI", "dplyr", "RMySQL", "rstudioapi", "htmlTable", "dbplyr", "devtools", "neuralnet", "stats", "DescTools", "plyr", "forecast")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+suppressMessages(library(dplyr))
+suppressMessages(library(DBI))
+library(dbplyr)
+suppressMessages(library(RMySQL))
+library(ggplot2)
+#For pretty tables
+library(DescTools)
+library(forecast)
+library(htmlTable)
+library(plyr)
+library(readxl)
+library(neuralnet)
+library(stats)
+library(knitr)
+```
+
+
+###Step 2 : Reading and standardizing dataset as per the requirements
+
+```{r}
+
+wine <- read_excel("Whitewine.xlsx")
+glimpse(wine) #4,898 obs and 12 variables.
+```
+#### Merge classes that have few observations
+```{r}
+#check for class imbalance
+table(wine$quality)
+```
+
+It’s clear from the above table that there is a huge class imbalance. For instance, there are 4898 samples but only 20 are of the 3 class while only 5 are of the 9 class. As such, the class samples are not enough to split the data into usable training and test sets and perform clustering. To adress this, we merged some classes such as 3 and 9 to 4 and 8 respectively to improve class balance.
+
+```{r}
+#Changes to the level 10
+wine$quality[wine$quality == 9]  <- 8
+#Changes to the level 3
+wine$quality[wine$quality == 3]  <- 4
+#check for class imbalance
+table(wine$quality)
+```
+
+
+```{r}
+md=function(x){
+  return((x-mean(x))/sd(x))
+}
+```
+
+```{r}
+wine_std=wine %>%
+  mutate(pH=md(pH),
+         sulphates=md(sulphates),
+         alcohol=md(alcohol),
+         `total sulfur dioxide`=md(`total sulfur dioxide`))
+```
+
+```{r}
+scaled.dat <- scale(wine[-12])
+wine1 <- as.data.frame(scaled.dat)
+wine1$quality <-wine$quality
+#wine1$quality <- wine$quality
+#Overview of scaled data
+head(wine1)
+```
+
+#### Remove outliers
+
+```{r}
+ggplot(stack(wine1), aes(x = ind, y = values))+
+  geom_boxplot(fill='rosybrown', color="darkred") +
+  coord_flip()+ggtitle("Plot with removed outliers") + xlab("Features")
+```
+
+```{r}
+# Remove the outliers from the data set.
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
+  H <- 1.5 * IQR(x, na.rm = na.rm)
+  y <- x
+  y[x < (qnt[1] - H)] <- NA
+  y[x > (qnt[2] + H)] <- NA
+  y
+}
+wine1$`fixed acidity` <- remove_outliers(wine1$`fixed acidity`)
+wine1$`volatile acidity` <- remove_outliers(wine1$`volatile acidity`)
+wine1$`citric acid` <- remove_outliers(wine1$`citric acid`)
+wine1$`residual sugar` <- remove_outliers(wine1$`residual sugar`)
+wine1$`chlorides` <- remove_outliers(wine1$`chlorides`)
+wine1$`free sulfur dioxide` <- remove_outliers(wine1$`free sulfur dioxide`)
+wine1$`total sulfur dioxide` <- remove_outliers(wine1$`total sulfur dioxide`)
+wine1$`density` <- remove_outliers(wine1$`density`)
+wine1$`pH` <- remove_outliers(wine1$`pH`)
+wine1$`sulphates` <- remove_outliers(wine1$`sulphates`)
+wine1$`alcohol` <- remove_outliers(wine1$`alcohol`)
+```
+
+```{r}
+wine <- na.omit(wine1)
+ggplot(stack(wine), aes(x = ind, y = values))+
+  geom_boxplot(fill='steelblue', color="black") +
+  coord_flip()+ggtitle("Plot with removed outliers") + xlab("Features")
+```
+
+
+#### Define functions for model evaluation
+
+#### Accuracy and related metrics
+```{r}
+#error metrics -- Confusion Matrix
+err_metric=function(CM)
+{
+  TN =CM[1,1]
+  TP =CM[2,2]
+  FP =CM[1,2]
+  FN =CM[2,1]
+  precision =(TP)/(TP+FP)
+  recall_score =(FP)/(FP+TN)
+ 
+  f1_score=2*((precision*recall_score)/(precision+recall_score))
+  accuracy_model  =(TP+TN)/(TP+TN+FP+FN)
+  False_positive_rate =(FP)/(FP+TN)
+  False_negative_rate =(FN)/(FN+TP)
+ 
+  print(paste("Precision value of the model: ",round(precision,2)))
+  print(paste("Accuracy of the model: ",round(accuracy_model,2)))
+  print(paste("Recall value of the model: ",round(recall_score,2)))
+  print(paste("False Positive rate of the model: ",round(False_positive_rate,2)))
+ 
+  print(paste("False Negative rate of the model: ",round(False_negative_rate,2)))
+ 
+  print(paste("f1 score of the model: ",round(f1_score,2)))
+}
+```
+
+
+
+
+### Kmeans
+
+##### K = 2
+```{r}
+#Set the new data
+wine1 <- wine
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 2) # k = 2
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc1 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+##### K = 3
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 3) # k = 2
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc2 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+
+##### K = 4
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 2) # k = 4
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc3 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+##### K = 5
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 5) # k = 5
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc4 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+
+##### K = 6
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 6) # k = 6
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc5 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+##### K = 7
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 7) # k = 7
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc6 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+
+
+##### K = 8
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 8) # k = 8
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc7 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+
+##### K = 9
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 9) # k = 9
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc8 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+##### K = 10
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 10) # k = 10
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+acc9 <- mean(wine$quality ==preds)
+print(CM)
+err_metric(CM)
+```
+
+```{r}
+k <- c(2, 3, 4, 5, 6, 7, 8, 9, 10)
+perff <- c(acc1, acc2, acc3, acc4, acc5, acc6, acc7, acc8, acc9)
+perff1 <- as.data.frame(k)
+perff1$accuracy <- perff
+perff1
+```
+
+
+```{r}
+perff
+```
+
+> The model attains the best performance when k = 8 i.e. 76%
+
+
+
+> The following code implmenets k means with k = 5
+
+##### K = 5
+```{r}
+# K-Means
+set.seed(100)
+k.means.fit <- kmeans(wine1, 8) # k = 5
+
+```
+
+
+
+```{r}
+#Make predictions
+preds <-k.means.fit$cluster
+CM= table(wine$quality , preds)
+print(CM)
+err_metric(CM)
+```
+
+```{r}
+#Coordinates oc centers
+k.means.fit$centers
+```
+#### Automatic checking for the optimal value of k
+
+```{r}
+wssplot <- function(data, nc=15, seed=1234){
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",
+       ylab="Within groups sum of squares")}
+
+wssplot(wine1, nc=15) 
+```
+As shown in the plot above, the model's within group squares steadies after k = 8 hence, using automatic checking of the optimal value of k, it is also noted that the model performs best when k = 8.
+
+## Question 2
+
+### Forecasting Part
+
+### 2nd Objective (MLP)
+##### Import the packages to be used
+
+### Import Data
+```{r}
+xchange <- read_excel("ExchangeUSD.xlsx")
+glimpse(xchange) #500 obs and 3 variables.
+```
+
+
+
+
+#### Time delay the time series
+
+The time series is lagged to the previous of period i.e the previous trading day 
+
+```{r}
+#Add the time lagged series to the dataset 
+xchange$time_lag <- lag(xchange$`USD/EUR`, 1)
+#exclude the null values
+xchange <- na.omit(xchange)
+```
+
+
+#### Normalize the data
+we invoke the following function to normalize our data
+
+```{r}
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+```
+
+##### Why normalize
+Ideally, This involves adjusting the data to a common scale so as to accurately compare predicted and actual values. Failure to normalize the data will typically result in the prediction value remaining the same across all observations, regardless of the input values.
+
+#### Apply normalization
+```{r}
+#normalized data
+vars <- c("USD/EUR", "time_lag")
+new_df <- xchange[vars]
+maxmindf <- as.data.frame(lapply(new_df, normalize))
+ head(maxmindf)
+ #Make a copy
+ maxmindf1 <- as.data.frame(lapply(new_df, normalize))
+```
+
+#### Split to test and training
+```{r}
+# Training and Test Data
+trainset <- maxmindf[1:400, ]
+testset <- maxmindf[401:500, ]
+```
+
+
+## Model 1
+
+> The neural network model was fitted with 2 hidden layers, 5 neurons and 3 neurons in the second layer using data with 1 lag.
+
+```{r}
+#Neural Network
+
+#Fit the model using using “time-delayed” rates
+nn <- neuralnet(`USD.EUR` ~ time_lag, data=trainset, hidden=c(5,3), linear.output=FALSE, threshold=0.001)
+```
+#### Predict and evaluate the performance of the model
+
+```{r}
+#Test the resulting output
+temp_test <- subset(testset, select = c("USD.EUR","time_lag"))
+#Make predictions
+nn.results <- compute(nn, temp_test)
+results <- data.frame(actual = testset$USD.EUR, prediction = nn.results$net.result)
+results <- na.omit(results)
+#Compute mae
+mae1 <- MAE(results$actual, results$prediction, na.rm = FALSE)
+#Compute rmse
+rmse1 <- RMSE(results$actual, results$prediction, na.rm = FALSE)
+#Compute mape
+mape1 <- MAPE(results$actual, results$prediction, na.rm = FALSE)
+```
+
+## Model 2
+
+> The neural network model was fitted with 2 layers with 3 neurons in the first layer and 3 neurons
+
+```{r}
+#Neural Network
+
+#Fit the model using using “time-delayed” rates
+nn <- neuralnet(`USD.EUR` ~ time_lag, data=trainset, hidden=c(3,3), linear.output=FALSE, threshold=0.001)
+
+
+```
+#### Predict and evaluate the performance of the model
+
+```{r}
+#Test the resulting output
+temp_test <- subset(testset, select = c("USD.EUR","time_lag"))
+#Make predictions
+nn.results <- compute(nn, temp_test)
+results <- data.frame(actual = testset$USD.EUR, prediction = nn.results$net.result)
+results <- na.omit(results)
+#Compute mae
+mae2 <- MAE(results$actual, results$prediction, na.rm = FALSE)
+#Compute rmse
+rmse2 <- RMSE(results$actual, results$prediction, na.rm = FALSE)
+#Compute mape
+mape2 <- MAPE(results$actual, results$prediction, na.rm = FALSE)
+```
+
+
+
+
+### Compare performance
+```{r}
+Model <- c('Model 1', 'Model 2')
+Model_perf <- as.data.frame(Model)
+Model_perf$RMSE <- c(rmse1, rmse2)
+Model_perf$MAE <- c(mae1, mae2)
+Model_perf$MAPE <- c(mape1, mape2)
+Model_perf
+```
+
+```{r}
+Model_perf[order(Model_perf$RMSE),]
+```
+
+> It is noted from the table above, that model 1 had way better the best performance i.e., it has the relatively low RMSE, MAE, and MAPE compared to teh second model that was fitted with 2 hidden layers and using a 2-lagged series. Hence, it will be fitted below.
+
+##### Best model
+
+> The neural network model was fitted with 3 hidden layers.
+
+```{r}
+
+#Get copy of the original data
+# Training and Test Data
+trainset <- maxmindf1[1:400, ]
+testset <- maxmindf1[401:500, ]
+#Neural Network
+
+#Fit the model using using “time-delayed” rates
+nn <- neuralnet(`USD.EUR` ~ time_lag, data=trainset, hidden=c(3,3, 3), linear.output=FALSE, threshold=0.001)
+```
+#### Predict and evaluate the performance of the model
+
+```{r}
+#Test the resulting output
+temp_test <- subset(testset, select = c("USD.EUR","time_lag"))
+#Make predictions
+nn.results <- compute(nn, temp_test)
+results <- data.frame(actual = testset$USD.EUR, prediction = nn.results$net.result)
+results <- na.omit(results)
+#Compute mae
+mae1 <- MAE(results$actual, results$prediction, na.rm = FALSE)
+#Compute rmse
+rmse1 <- RMSE(results$actual, results$prediction, na.rm = FALSE)
+#Compute mape
+mape1 <- MAPE(results$actual, results$prediction, na.rm = FALSE)
+```
+
+#### Overview of the network
+
+```{r}
+plot(nn)
+```
+
+>Error of the neural network model, along with the weights between the inputs, hidden layers, and outputs:
+
+
+
+```{r}
+nn$result.matrix
+```
+##### Ouput predicts and actual entries
+
+```{r}
+kable(head(results, 5), caption = "Actual and predicted values")
+```
